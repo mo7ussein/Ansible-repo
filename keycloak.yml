@@ -1,0 +1,132 @@
+
+- name: checking installed keycloak service 
+  command: systemctl status assista-keycloak
+  register: service
+  ignore_errors: true
+  changed_when: false
+
+- name: Installed keycloak service
+  debug:
+    msg: "keycloak is already running. Skipping the installation part"
+  when: service.rc == 0
+  ignore_errors: true
+
+- block:
+
+  - name: creating keycloak folder inside {{ base_dir }} directory
+    file:
+      path: "{{ base_dir }}/keycloak"
+      state: directory
+    tags: keycloak1
+
+  - name: downloading keycloak 9.0.3
+    get_url: 
+#      url: https://downloads.jboss.org/keycloak/9.0.3/keycloak-9.0.3.zip
+      url: https://downloads.jboss.org/keycloak/9.0.3/keycloak-9.0.3.zip
+      dest: "{{ base_dir }}/keycloak"
+      validate_certs: no
+      force: no
+    tags: keycloak1
+  
+  - name: extracting keycloak zip file
+    unarchive:
+      src: "{{ base_dir }}/keycloak/keycloak-9.0.3.zip"
+      dest: "{{ base_dir }}/keycloak"
+      creates: "{{ base_dir }}/keycloak/keycloak-9.0.3"
+      remote_src: yes
+    tags: keycloak1
+  
+  - name: creating mysql/main folder inside com folder
+    file: 
+      path: "{{ base_dir }}/keycloak/keycloak-9.0.3/modules/system/layers/keycloak/com/mysql/main"
+      state: directory
+    tags: keycloak1
+  
+  - name: copying module.xml file to main folder
+    copy: 
+      src: module.xml
+      dest: "{{ base_dir }}/keycloak/keycloak-9.0.3/modules/system/layers/keycloak/com/mysql/main"
+    tags: keycloak1
+  
+  - name: copying mysql connector to main folder
+    copy:
+      src: mysql-connector-java-8.0.17.jar
+      dest: "{{ base_dir }}/keycloak/keycloak-9.0.3/modules/system/layers/keycloak/com/mysql/main"
+  
+  - name: Creating keycloak DB and Keycloak user in MySQL
+    shell: mysql -u {{ mysql_user }} -p{{ mysql_password }} -e "{{ item }}"
+    with_items:
+      - CREATE DATABASE keycloak character set utf8 collate utf8_unicode_ci;
+   #   - CREATE USER 'keycloak'@'localhost' IDENTIFIED BY 'keycloak';
+   #   - GRANT ALL PRIVILEGES ON * . * TO 'keycloak'@'localhost';
+    ignore_errors: true
+    tags: password
+    when: db_install == "yes"
+  
+    #  - name: copying standalone.xml file
+#    template:
+#      src: standalone.xml
+#      dest: "{{ base_dir }}/keycloak/keycloak-9.0.3/standalone/configuration/"
+  
+  - name: creating keycloak conf directory inside /etc
+    file:
+      path: /etc/keycloak
+      state: directory
+  
+  - name: copying wildfly.conf,launch.sh to /etc/keycloak
+    shell: "{{ item }}"
+    with_items:
+      - cp {{ base_dir }}/keycloak/keycloak-9.0.3/docs/contrib/scripts/systemd/wildfly.conf /etc/keycloak/keycloak.conf
+      - cp {{ base_dir }}/keycloak/keycloak-9.0.3/docs/contrib/scripts/systemd/launch.sh {{ base_dir }}/keycloak/keycloak-9.0.3/bin/
+      - cp {{ base_dir }}/keycloak/keycloak-9.0.3/docs/contrib/scripts/systemd/wildfly.service /etc/systemd/system/assista-keycloak.service
+  
+  - name: changing WILDFLY_HOME in launch.sh file
+    lineinfile:
+      path: "{{ base_dir }}/keycloak/keycloak-9.0.3/bin/launch.sh"
+      regexp: '^    WILDFLY_HOME'
+      line: '    WILDFLY_HOME="{{ base_dir }}/keycloak/keycloak-9.0.3"'
+      backrefs: yes
+    tags: error
+  
+  - name: copying keycloak.service file
+    template:
+      src: assista-keycloak.service
+      dest: /etc/systemd/system/assista-keycloak.service
+    tags: error
+  
+  - name: reloading system manager config and enabling keycloak service
+    shell: "{{ item}}"
+    with_items:
+      - systemctl daemon-reload
+      - systemctl enable assista-keycloak
+    tags: error
+    
+  - name: adding admin user in keycloak
+    command: ./add-user-keycloak.sh --user {{ keycloak_user }} --password {{ keycloak_password }} --realm master
+    args:
+      chdir: "{{ base_dir }}/keycloak/keycloak-9.0.3/bin"
+    ignore_errors: true
+    tags: user  
+    when: db_install == "yes"
+
+  - name: creating mysql directory to copy keycloak dump file
+    file:
+      path: "{{ base_dir }}/mysql"
+      state: directory
+    tags: import
+    when: db_install == "yes"
+
+  - name: copying  keycloak dump file
+    copy:
+      src: keycloak.sql
+      dest: "{{ base_dir }}/mysql"
+    tags: import
+    when: db_install == "yes"
+
+
+#  - name: importing keycloak db using dump file
+#    shell: mysql -u {{ mysql_user }} -p{{ mysql_password }} keycloak < keycloak.sql
+#    args:
+#     chdir: "{{ base_dir }}/mysql"
+#    tags: dump1 
+  when: service.rc != 0

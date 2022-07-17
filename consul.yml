@@ -1,0 +1,39 @@
+  - name: Installing unzip package to extract zip files
+    apt: pkg=unzip state=present
+    tags: unzip
+    when: ansible_distribution == "Ubuntu"
+  
+  - name: creating consul directory
+    file:
+      path: "{{ base_dir }}/consul"
+      state: directory
+  
+  - name: Downloading and extracting consul zip file
+    unarchive:
+      src: https://releases.hashicorp.com/consul/1.8.4/consul_1.8.4_linux_amd64.zip
+      dest: "{{ base_dir }}/consul"
+      remote_src: yes
+      validate_certs: no
+      creates: "{{ base_dir }}/consul/consul"
+  
+  - name: copying config.json,consul-shell.sh file to the remote server
+    template:
+      src: "{{ item }}"
+      dest: "{{ base_dir }}/consul"
+      mode: 0744
+    with_items:
+      - config.json
+      - consul-shell.sh
+  
+  - name: copying consul service file to /etc/systemd/system/ folder
+    template:
+      src: assista-consul.service
+      dest: /etc/systemd/system/
+    register: copy
+  
+  - name: reloading system manager config and enabling  services
+    shell: "{{ item }}"
+    with_items:
+      - systemctl daemon-reload
+      - systemctl enable assista-consul.service
+    when: copy.changed == true
